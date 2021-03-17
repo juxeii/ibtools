@@ -5,8 +5,13 @@ import ib_insync
 from IPython.utils import io
 
 
+def setApplication(app):
+    global __app__
+    __app__ = app
+
+
 def getOptionContracts(contract, expiration):
-    __ibs__.qualifyContracts(contract)
+    __app__.qualifyContracts(contract)
 
     if isinstance(expiration, str):
         expiration = __toDateFromTWSDate(expiration)
@@ -26,7 +31,7 @@ def getOptionContracts(contract, expiration):
 
 
 def getOptionContractsUpUntilDays(contract, daysToExpiration):
-    __ibs__.qualifyContracts(contract)
+    __app__.qualifyContracts(contract)
 
     storedChains = __loadValidOptionChains(contract)
     storedExpirations = list(storedChains.keys())
@@ -48,8 +53,7 @@ def getOptionContractsUpUntilDays(contract, daysToExpiration):
 
 
 ###################################################################
-__ibs__ = None
-
+__app__ = None
 __twsDateFormat = '%Y%m%d'
 
 
@@ -100,7 +104,7 @@ def __filterExchangeFromOptionChain(optChain, exchange):
 
 
 def __optionChain(contract):
-    optChain = __ibs__.reqSecDefOptParams(underlyingSymbol=contract.symbol, futFopExchange='',
+    optChain = __app__.reqSecDefOptParams(underlyingSymbol=contract.symbol, futFopExchange='',
                                           underlyingSecType='STK', underlyingConId=contract.conId)
     return __filterExchangeFromOptionChain(optChain, 'SMART')
 
@@ -114,7 +118,7 @@ def __optionContractsForStrikes(optionChain, right, expiration):
     optionContracts = [__optionContract(optionChain.tradingClass, expiration, strike, right, optionChain.exchange)
                        for strike in optionChain.strikes]
     with io.capture_output():
-        return __ibs__.qualifyContracts(*optionContracts)
+        return __app__.qualifyContracts(*optionContracts)
 
 
 def __callOptionContractsForExpiration(optionChain, expiration):
