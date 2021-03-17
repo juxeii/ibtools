@@ -34,17 +34,17 @@ The second key is the contract type, like calls or puts.
 The third key is the strike price.
 So, to accesss all call contracts of expiration date 2021-03-19, you write
 ```python
-aapl=Stock(symbol='AAPL', exchange='SMART/AMEX')
+aapl = Stock(symbol='AAPL', exchange='SMART/AMEX')
 chains = ibt.getOptionContractsUpUntilDays(aapl, 60)
 print(chains[datetime.date(2021, 3, 19)]) #all contracts for this expiration date
 print(chains[datetime.date(2021, 3, 19)]['calls']) #all call contracts for this date
-print(chains[datetime.date(2021, 3, 19)]['puts']) #all call contracts for this date
+print(chains[datetime.date(2021, 3, 19)]['puts']) #all put contracts for this date
 print(chains[datetime.date(2021, 3, 19)]['puts'][122.0]) #put contract for this date and strike price)
 ```
 
 To request a single option chain for a specific expiration date:
 ```python
-aapl=Stock(symbol='AAPL', exchange='SMART/AMEX')
+aapl = Stock(symbol='AAPL', exchange='SMART/AMEX')
 chain = ibt.getOptionContracts(aapl, datetime.date(2021, 3, 19))
 print(chain['calls'])
 print(chain['puts'])
