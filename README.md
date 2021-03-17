@@ -5,7 +5,7 @@ It comes with a caching mechanism, which will store already created
 contracts, such that at application restart not all have to be requested again.
 
 # Installation
-I think python>=3.7 is required, although I did not tested it.
+I think python>=3.7 is required, although I did not test it.
 You can install it with
 ```bat
 pip install ibtools
@@ -56,6 +56,4 @@ chain = ibt.getOptionContracts(aapl, '20210319'))
 However, accessing option chains is not possible with string dates.
 Use the dateformat as described above.
 
-[ci-image]: https://github.com/erdewit/ib_insync
-[ci-link]: https://github.com/juxeii/memoization/actions?query=workflow%3Abuild
-[memoization]: https://en.wikipedia.org/wiki/Memoization
+[ib_insync]: https://github.com/erdewit/ib_insync
