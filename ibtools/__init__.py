@@ -1,3 +1,6 @@
 from optionchain import setApplication
 from optionchain import getOptionContracts
+from optionchain import getOptionContractsInDateRange
+from optionchain import getOptionContractsInDaysRange
 from optionchain import getOptionContractsUpUntilDays
+from optionchain import OptionChain

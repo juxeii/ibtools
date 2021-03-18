@@ -36,24 +36,44 @@ So, to accesss all call contracts of expiration date 2021-03-19, you write
 ```python
 aapl = Stock(symbol='AAPL', exchange='SMART/AMEX')
 chains = ibt.getOptionContractsUpUntilDays(aapl, 60)
-print(chains[datetime.date(2021, 3, 19)]) #all contracts for this expiration date
-print(chains[datetime.date(2021, 3, 19)]['calls']) #all call contracts for this date
-print(chains[datetime.date(2021, 3, 19)]['puts']) #all put contracts for this date
-print(chains[datetime.date(2021, 3, 19)]['puts'][122.0]) #put contract for this date and strike price)
+print(chain[datetime.date(2021, 4, 23)]) #all contracts for this expiration date
+print(chain[datetime.date(2021, 4, 23)].calls) #all call contracts for this date
+print(chain[datetime.date(2021, 4, 23)].puts) #all put contracts for this date
+print(chain[datetime.date(2021, 4, 23)].calls[65.0]) #call contract for this date and strike price
+print(chain[datetime.date(2021, 4, 23)].puts[75.0]) #put contract for this date and strike price
 ```
 
-To request a single option chain for a specific expiration date:
+To request chains for specific expirations dates:
 ```python
 aapl = Stock(symbol='AAPL', exchange='SMART/AMEX')
-chain = ibt.getOptionContracts(aapl, datetime.date(2021, 3, 19))
-print(chain['calls'])
-print(chain['puts'])
+chains = ibt.getOptionContracts(aapl, datetime.date(2021, 3, 19), '20210326')
+print(chain[datetime.date(2021, 3, 19)].calls)
+print(chain[datetime.date(2021, 3, 26)].puts)
 ```
-Here you can also provide a date in the usual string format of TWS:
-```python
-chain = ibt.getOptionContracts(aapl, '20210319'))
-```
+You can also provide a list of dates if you like, since this function takes variadic dates.
+Further, you can mix the date formats.
 However, accessing option chains is not possible with string dates.
 Use the dateformat as described above.
+
+To request chains for a date range:
+```python
+aapl = Stock(symbol='AAPL', exchange='SMART/AMEX')
+chains = ibt.getOptionContractsInDateRange(aapl, '20210319', '20210429')  
+```
+This will return all chains that fall in between 20210319 and 20210429.
+
+Sometimes you are interested to request chains that fall in between 30 to 60 days from now, because of theta decay ;)
+```python
+aapl = Stock(symbol='AAPL', exchange='SMART/AMEX')
+chains = ibt.getOptionContractsInDaysRange(aapl, 30, 60)  
+```
+# Misc
+Please be aware that this interface is subject to change.
+
+The main selling point is the speed gain if you request chains again.
+All cached contracts are stored in binary files where your algorithm runs.
+You should see an almost instant loading of already requested chains.
+
+Please let me know if you encounter bugs. Thx.
 
 [ib_insync]: https://github.com/erdewit/ib_insync

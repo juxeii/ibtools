@@ -1,8 +1,20 @@
-from os.path import exists
 import datetime
 import pickle
-import ib_insync
+from ib_insync import Option
 from IPython.utils import io
+from datetime import timedelta
+from os.path import exists
+
+
+class OptionChain:
+    def __init__(self, symbol, expiration, calls, puts):
+        self.symbol = symbol
+        self.expiration = expiration
+        self.calls = calls
+        self.puts = puts
+
+    def __str__(self):
+        return 'Option chain for '+str(self.symbol) + '\n'+str(self.expiration)
 
 
 def setApplication(app):
@@ -10,46 +22,26 @@ def setApplication(app):
     __app__ = app
 
 
-def getOptionContracts(contract, expiration):
+def getOptionContracts(contract, *dates):
     __app__.qualifyContracts(contract)
+    expirations = __filterExpirations(__toDates(*dates), contract)
+    return __contractsForExpirations(contract, expirations)
 
-    if isinstance(expiration, str):
-        expiration = __toDateFromTWSDate(expiration)
 
-    if not __toTWSDateFromDate(expiration) in __optionChain(contract).expirations:
-        print(str(expiration)+" for " + contract.symbol+" is not a valid expiration date!")
-        return {'calls': {}, 'puts': {}}
+def getOptionContractsInDateRange(contract, beginDate, endDate):
+    __app__.qualifyContracts(contract)
+    return __optionContractsForRange(contract,  __toDate(beginDate), __toDate(endDate))
 
-    storedChains = __loadValidOptionChains(contract)
-    if expiration in storedChains.keys():
-        return storedChains[expiration]
 
-    optionContracts = __optionContractsForExpiration(contract, expiration)
-    __serializeOptionChains(contract, dict([(expiration, optionContracts)]))
-
-    return optionContracts
+def getOptionContractsInDaysRange(contract, lowerDaysFromNow, higherDaysFromNow):
+    today = __today()
+    return getOptionContractsInDateRange(contract,
+                                         today+timedelta(days=lowerDaysFromNow),
+                                         today+timedelta(days=higherDaysFromNow))
 
 
 def getOptionContractsUpUntilDays(contract, daysToExpiration):
-    __app__.qualifyContracts(contract)
-
-    storedChains = __loadValidOptionChains(contract)
-    storedExpirations = list(storedChains.keys())
-    chainExpirations = __datesFromTWSDates(__optionChain(contract).expirations)
-
-    expirationsUntilDays = __getExpirationsUpUntilDays(storedExpirations,
-                                                       chainExpirations, daysToExpiration)
-
-    validStoredChains = {expiration: chain for expiration, chain in storedChains.items()
-                         if __daysUntilExpiration(expiration) >= 0}
-
-    newChains = {expiration: getOptionContracts(contract, expiration)
-                 for expiration in expirationsUntilDays}
-
-    optionChains = {**validStoredChains, **newChains}
-    __serializeOptionChains(contract, optionChains)
-
-    return optionChains
+    return getOptionContractsInDaysRange(contract, 0, daysToExpiration)
 
 
 ###################################################################
@@ -57,46 +49,108 @@ __app__ = None
 __twsDateFormat = '%Y%m%d'
 
 
-def __optionContractsForExpiration(contract, expiration):
+def __filterExpirations(dates, contract):
+    chainExpirations = __expirationsOfChain(contract)
+    return [date for date in dates if date in chainExpirations]
+
+
+def __optionContractsForRange(contract, beginDate, endDate):
+    chainExpirations = __expirationsOfChain(contract)
+    expirationsInRange = __expirationsInRange(beginDate, endDate, chainExpirations)
+
+    return __contractsForExpirations(contract, expirationsInRange)
+
+
+def __contractsForExpirations(contract, expirations):
+    storedChains = __loadValidOptionChains(contract)
+    cachedChains = __cachedChains(storedChains, expirations)
+    newChains = __newsChains(contract, storedChains, expirations)
+    print("storedChains "+str(storedChains)+'\n')
+    print("cachedChains "+str(cachedChains)+'\n')
+    print("newChains "+str(newChains)+'\n')
+
+    return __serializeAndReturnChains(contract, cachedChains, newChains, storedChains)
+
+
+def __cachedChains(storedChains, expirations):
+    storedExpirations = list(storedChains.keys())
+    cachedExpirations = __cachedExpirations(storedExpirations, expirations)
+
+    return {expiration: storedChains[expiration] for expiration in cachedExpirations}
+
+
+def __newsChains(contract, storedChains, expirations):
+    storedExpirations = list(storedChains.keys())
+    notCachedExpirations = __notCachedExpirations(storedExpirations, expirations)
+
+    return {expiration: __createContractsForExpiration(contract, expiration)
+            for expiration in notCachedExpirations}
+
+
+def __serializeAndReturnChains(contract, cachedChains, newChains, storedChains):
+    chainsToReturn = {**cachedChains, **newChains}
+    chainsToSerialize = {**storedChains, **newChains}
+    __serializeOptionChains(contract, chainsToSerialize)
+    return chainsToReturn
+
+
+def __expirationsInRange(beginDate, endDate, expirations):
+    return [expiration for expiration in expirations if beginDate <= expiration <= endDate]
+
+
+def __cachedExpirations(storedExpirations, requestedExpirations):
+    return [expiration for expiration in requestedExpirations if expiration in storedExpirations]
+
+
+def __notCachedExpirations(storedExpirations, requestedExpirations):
+    return [expiration for expiration in requestedExpirations if not expiration in storedExpirations]
+
+
+def __createContractsForExpiration(contract, expiration):
     print("Creating option contracts for " + contract.symbol+" "+str(expiration)+" ...")
+
     optionChain = __optionChain(contract)
-    callsByStrike = __callOptionContractsByStrikes(optionChain, expiration)
-    putsByStrike = __putOptionContractsByStrikes(optionChain, expiration)
+    callContracts = __callContractsByStrikes(optionChain, expiration)
+    putContracts = __putContractsByStrikes(optionChain, expiration)
+
     print("Created option contracts for " + contract.symbol+" "+str(expiration)+".")
+    return OptionChain(contract.symbol, expiration, callContracts, putContracts)
 
-    return {'calls': callsByStrike, 'puts': putsByStrike}
+
+def __toDate(date):
+    return __toDateFromTWSDate(date)
 
 
-def __getExpirationsUpUntilDays(storedExpirations, chainExpirations, daysToExpiration):
-    filteredExpirations = [expiration for expiration in chainExpirations
-                           if not expiration in storedExpirations]
+def __toDates(*dates):
+    return [__toDate(date) for date in dates]
 
-    return __expirationsUntilDays(filteredExpirations, daysToExpiration)
+
+def __today():
+    return datetime.date.today()
+
+
+def __expirationsOfChain(contract):
+    return __toDates(*__optionChain(contract).expirations)
 
 
 def __toDateFromTWSDate(twsDate):
-    return datetime.datetime.strptime(twsDate, __twsDateFormat).date()
+    if isinstance(twsDate, str):
+        return datetime.datetime.strptime(twsDate, __twsDateFormat).date()
+    return twsDate
 
 
 def __toTWSDateFromDate(date):
+    if isinstance(date, str):
+        return date
     return date.strftime(__twsDateFormat)
 
 
-def __datesFromTWSDates(twsDates):
-    return [__toDateFromTWSDate(twsDate) for twsDate in twsDates]
-
-
 def __timeDeltaInDays(earlyDate, lateDate):
-    delta = (lateDate - earlyDate).total_seconds()
-    return delta/86400
+    return (lateDate - earlyDate).days
 
 
 def __daysUntilExpiration(expiration):
-    return __timeDeltaInDays(datetime.date.today(), expiration)
-
-
-def __expirationsUntilDays(expirations, maxDays):
-    return [expiration for expiration in expirations if __daysUntilExpiration(expiration) <= maxDays]
+    return __timeDeltaInDays(__today(), expiration)
 
 
 def __filterExchangeFromOptionChain(optChain, exchange):
@@ -104,39 +158,36 @@ def __filterExchangeFromOptionChain(optChain, exchange):
 
 
 def __optionChain(contract):
-    optChain = __app__.reqSecDefOptParams(underlyingSymbol=contract.symbol, futFopExchange='',
-                                          underlyingSecType='STK', underlyingConId=contract.conId)
+    optChain = __app__.reqSecDefOptParams(underlyingSymbol=contract.symbol,
+                                          futFopExchange='',
+                                          underlyingSecType='STK',
+                                          underlyingConId=contract.conId)
     return __filterExchangeFromOptionChain(optChain, 'SMART')
 
 
-def __optionContract(symbol, expiration, strike, right, exchange):
-    return ib_insync.Option(
-        symbol, __toTWSDateFromDate(expiration), strike, right, exchange)
+def __contract(symbol, expiration, strike, right, exchange):
+    return Option(symbol, __toTWSDateFromDate(expiration), strike, right, exchange)
 
 
-def __optionContractsForStrikes(optionChain, right, expiration):
-    optionContracts = [__optionContract(optionChain.tradingClass, expiration, strike, right, optionChain.exchange)
-                       for strike in optionChain.strikes]
+def __contractsForExpiration(optionChain, right, expiration):
+    contracts = [__contract(optionChain.tradingClass,
+                            expiration,
+                            strike,
+                            right,
+                            optionChain.exchange)
+                 for strike in optionChain.strikes]
     with io.capture_output():
-        return __app__.qualifyContracts(*optionContracts)
+        return __app__.qualifyContracts(*contracts)
 
 
-def __callOptionContractsForExpiration(optionChain, expiration):
-    return __optionContractsForStrikes(optionChain, "C", expiration)
+def __callContractsByStrikes(optionChain, expiration):
+    callContracts = __contractsForExpiration(optionChain, "C", expiration)
+    return {callContract.strike:  callContract for callContract in callContracts}
 
 
-def __callOptionContractsByStrikes(optionChain, expiration):
-    callContracts = __callOptionContractsForExpiration(optionChain, expiration)
-    return dict([(contract.strike, contract) for contract in callContracts])
-
-
-def __putOptionContractsForExpiration(optionChain, expiration):
-    return __optionContractsForStrikes(optionChain, "P", expiration)
-
-
-def __putOptionContractsByStrikes(optionChain, expiration):
-    putContracts = __putOptionContractsForExpiration(optionChain, expiration)
-    return dict([(contract.strike, contract) for contract in putContracts])
+def __putContractsByStrikes(optionChain, expiration):
+    putContracts = __contractsForExpiration(optionChain, "P", expiration)
+    return {putContract.strike:  putContract for putContract in putContracts}
 
 
 def __fileNameForOptionChains(contract):
