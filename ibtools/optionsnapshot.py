@@ -1,6 +1,6 @@
 from rx.subject import Subject
 from rx.operators import *
-from tools import _app, toDate
+from .tools import OptionDetail, _app
 from IPython.utils import io
 
 
@@ -14,15 +14,14 @@ def getOptionChainsSnapshot(optionChains, onChainsSnapshotAvailable=lambda snaps
 
 class OptionSnapshot:
 
-    def __init__(self, marketData, undMarketData):
+    def __init__(self, optionDetail, marketData, undMarketData):
+        self.optionDetail = optionDetail
         self.marketData = marketData
         self.undMarketData = undMarketData
-        self.contract = marketData.contract
-        self.undContract = undMarketData.contract
-        self.symbol = self.contract.symbol
-        self.expiration = toDate(self.contract.lastTradeDateOrContractMonth)
-        self.strike = self.contract.strike
-        self.right = self.contract.right
+        self.symbol = optionDetail.symbol
+        self.expiration = optionDetail.expiration
+        self.strike = optionDetail.strike
+        self.right = optionDetail.right
 
     def __str__(self):
         return 'Option snapshot '+str(self.symbol) + ' on ' + \
@@ -33,19 +32,19 @@ class OptionChainSnapshot:
 
     def __init__(self, optionChain, chainSnapshotAvailableListener):
         self.optionChain = optionChain
-        self.underlyingContract = optionChain.underlyingContract
+        self.underlying = optionChain.underlying
         self.chainSnapshotAvailableListener = chainSnapshotAvailableListener
         self.symbol = optionChain.symbol
         self.expiration = optionChain.expiration
         self.isDataAvailable = False
-        self.chain = list(optionChain.calls.values())+list(optionChain.puts.values())
+        self.chain = optionChain.callContracts+optionChain.putContracts
 
         print('Creating option chain snapshot for ' +
               str(self.symbol)+' on '+str(self.expiration)+'...')
         self.__subscribeToMarketData()
 
     def __subscribeToMarketData(self):
-        self.undMarketData = _requestMarketData(self.underlyingContract)
+        self.undMarketData = _requestMarketData(self.underlying)
 
         self.__dataStream = _MarketDataStream()
         self.__dataStream.observable \
@@ -56,6 +55,7 @@ class OptionChainSnapshot:
                 take(len(self.chain)),
                 do_action(lambda data: _cancelMarketData(data.contract)),
                 group_by(lambda data: data.contract.right == 'C'),
+
                 flat_map(lambda grp: grp.pipe(to_list()))
             ) .subscribe(on_next=self.__onMarketDataByRight,
                          on_completed=self.__onAllMarketDataReady)
@@ -64,13 +64,15 @@ class OptionChainSnapshot:
 
     def __onMarketDataByRight(self, marketDataByRight):
         if marketDataByRight[0].contract.right == 'C':
-            self.calls = _snapshotByStrike(marketDataByRight, self.undMarketData)
+            self.calls = _snapshotByStrike(
+                self.optionChain, 'C', marketDataByRight, self.undMarketData)
         else:
-            self.puts = _snapshotByStrike(marketDataByRight, self.undMarketData)
+            self.puts = _snapshotByStrike(
+                self.optionChain, 'P', marketDataByRight, self.undMarketData)
 
     def __onAllMarketDataReady(self):
         with io.capture_output():
-            _cancelMarketData(self.underlyingContract)
+            _cancelMarketData(self.underlying)
         self.isDataAvailable = True
         print('Option chain snapshot for ' + self.symbol+' on '+str(self.expiration) + ' created.')
         self.chainSnapshotAvailableListener(self)
@@ -151,8 +153,22 @@ class _MarketDataStream:
             self.observable.on_next(marketData)
 
 
-def _snapshotByStrike(marketDataSet, undMarketData):
-    return {marketData.contract.strike: OptionSnapshot(marketData, undMarketData) for marketData in marketDataSet}
+def _optionSnapshot(optionChain, right, strike, marketData, undMarketData):
+    optionDetail = None
+    if right == 'C':
+        optionDetail = OptionDetail(marketData.contract, optionChain.calls[strike].underlying)
+    else:
+        optionDetail = OptionDetail(marketData.contract, optionChain.puts[strike].underlying)
+    return OptionSnapshot(optionDetail, marketData, undMarketData)
+
+
+def _snapshotByStrike(optionChain, right, marketDataSet, undMarketData):
+    return {marketData.contract.strike: _optionSnapshot(optionChain,
+                                                        right,
+                                                        marketData.contract.strike,
+                                                        marketData,
+                                                        undMarketData)
+            for marketData in marketDataSet}
 
 
 def _isMarketDataReady(marketData):

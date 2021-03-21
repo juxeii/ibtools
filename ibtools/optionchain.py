@@ -3,16 +3,21 @@ from ib_insync import Option
 from IPython.utils import io
 from datetime import timedelta
 from os.path import exists
-from tools import _app, today, toDate, toDates, toTWSDateFromDate
-
+#from .tools import _app, _createOption, today, toDate, toDates, OptionDetail
+print('__file__={0:<35} | __name__={1:<20} | __package__={2:<20}'.format(__file__,__name__,str(__package__)))
 
 class OptionChain:
-    def __init__(self, underlyingContract, expiration, calls, puts):
-        self.underlyingContract = underlyingContract
-        self.symbol = underlyingContract.symbol
+    def __init__(self, underlying, expiration, calls, puts):
+        self.underlying = underlying
+        self.symbol = underlying.symbol
         self.expiration = expiration
         self.calls = calls
         self.puts = puts
+        self.callContracts = self.__getContracts(self.calls)
+        self.putContracts = self.__getContracts(self.puts)
+
+    def __getContracts(self, detailsByStrike):
+        return [detail.option for detail in detailsByStrike.values()]
 
     def __str__(self):
         return 'Option chain for '+str(self.symbol) + ' on '+str(self.expiration)
@@ -101,35 +106,32 @@ def _chain(contract):
     return _filterExchangeFromChain(optChain, 'SMART')
 
 
-def _contract(symbol, expiration, strike, right, exchange):
-    return Option(symbol, toTWSDateFromDate(expiration), strike, right, exchange)
-
-
-def _contractsForExpiration(chain, right, expiration):
-    contracts = [_contract(chain.tradingClass,
-                           expiration,
-                           strike,
-                           right,
-                           chain.exchange)
-                 for strike in chain.strikes]
+def _optionDetailsForExpiration(underlying, chain, right, expiration):
+    options = [_createOption(chain.tradingClass,
+                             expiration,
+                             strike,
+                             right,
+                             chain.exchange)
+               for strike in chain.strikes]
     with io.capture_output():  # Trying to suppress Error 200 from TWS
-        return _app().qualifyContracts(*contracts)
+        validOptions = _app().qualifyContracts(*options)
+    return [OptionDetail(option, underlying) for option in validOptions]
 
 
-def _contractsByStrikes(chain, right, expiration):
-    contracts = _contractsForExpiration(chain, right, expiration)
-    return {contract.strike:  contract for contract in contracts}
+def _contractsByStrikes(underlying, chain, right, expiration):
+    optionDetails = _optionDetailsForExpiration(underlying, chain, right, expiration)
+    return {optionDetail.strike:  optionDetail for optionDetail in optionDetails}
 
 
-def _createContractsForExpiration(underlyingContract, expiration):
-    print("Creating option contracts for " + underlyingContract.symbol+" "+str(expiration)+" ...")
+def _createContractsForExpiration(underlying, expiration):
+    print("Creating option contracts for " + underlying.symbol+" "+str(expiration)+" ...")
 
-    chain = _chain(underlyingContract)
-    callContracts = _contractsByStrikes(chain, "C", expiration)
-    putContracts = _contractsByStrikes(chain, "P", expiration)
+    chain = _chain(underlying)
+    callContracts = _contractsByStrikes(underlying, chain, "C", expiration)
+    putContracts = _contractsByStrikes(underlying, chain, "P", expiration)
 
-    print("Created option contracts for " + underlyingContract.symbol+" "+str(expiration)+".")
-    return OptionChain(underlyingContract, expiration, callContracts, putContracts)
+    print("Created option contracts for " + underlying.symbol+" "+str(expiration)+".")
+    return OptionChain(underlying, expiration, callContracts, putContracts)
 
 
 def _expirationsOfChain(contract):
