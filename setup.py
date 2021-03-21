@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-VERSION = '0.5'
+VERSION = '0.6'
 DESCRIPTION = 'Little helper tools for IB API'
 LONG_DESCRIPTION = 'Little helper tools for IB API'
 
@@ -12,7 +12,7 @@ setup(
     description=DESCRIPTION,
     long_description=LONG_DESCRIPTION,
     packages=find_packages(),
-    install_requires=['ib_insync', 'IPython'],
+    install_requires=['rx', 'ib_insync', 'IPython'],
     keywords=['python', 'first package'],
     classifiers=[
         "Development Status :: 4 - Beta",
