@@ -172,11 +172,9 @@ _genericTickList = ','.join([str(i) for i in _tickList])
 
 
 def _isMarketDataReady(marketData):
-    # return True
-    return not math.isnan(marketData.bidSize)
-    # return not math.isnan(marketData.callOpenInterest) and \
-    #   not math.isnan(marketData.bid) \
-    #  and hasattr(marketData, 'modelGreeks')
+    return not math.isnan(marketData.callOpenInterest) and \
+        not math.isnan(marketData.bid) \
+        and hasattr(marketData, 'modelGreeks')
 
 
 def _requestMarketData(contract):

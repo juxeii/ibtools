@@ -60,7 +60,36 @@ You can also specify days to expiration in a range:
 chains=ibt.getOptionChainsInDteRange(ubx, 20, 30)
 print(chains)
 ```
+-----------------------------------------------
+You can now also subscribe to realtime market data for the option chains.
+```python
+ubx = Stock(symbol='UBX', exchange='SMART/AMEX')
+chains = ibt.getOptionChains(ubx, '20210416', '20210521')
+marketDataForChains=ibt.OptionChainsMarketData(chains)
+print(marketDataForChains[datetime.date(2021, 4, 16)])
 
+def onChainsMktDataReady(marketData):
+    print(str(marketData) + ' is now available')
+marketDataForChains.subscribe(onChainsMktDataReady)
+```
+Here, we first create an `OptionChainsMarketData` object with the chains we have at hand. At this point in time the market data are not yet subscribed. For that, we need to call `subscribe` and pass it a listener function, which will notify us if the received data is ready and complete. You do not have to pass this listener...you can just simply wait until `OptionChainsMarketData` is `true`
+```python
+ib.loopUntil(marketDataForChains)
+# now marketDataForChains has valid market data
+```
+
+To access realtime option data you then write
+```python
+marketDataForChains[datetime.date(2021, 4, 16)].calls[5.0].marketData
+marketDataForChains[datetime.date(2021, 4, 16)].calls[5.0].undMarketData
+```
+The first line shows the option data and the second the data for the underlying.
+
+In order to keep the system performant, you should unsubscribe from the chain data when not needed:
+```python
+marketDataForChains.unsubscribe()
+```
+**Note that subscriptions only work when the market is open!**
 # Misc
 Please be aware that this interface is subject to change.
 

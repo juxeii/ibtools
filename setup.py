@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
-VERSION = '0.6'
+VERSION = '0.61'
 DESCRIPTION = 'Little helper tools for IB API'
 LONG_DESCRIPTION = 'Little helper tools for IB API'
 
