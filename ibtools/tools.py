@@ -1,10 +1,12 @@
 import datetime
-from ib_insync import Option
+from rx.subject import Subject
 
 
 class OptionDetail:
 
     def __init__(self, option, underlying):
+        _app.qualifyContracts(underlying)
+
         self.option = option
         self.underlying = underlying
         self.symbol = underlying.symbol
@@ -13,12 +15,20 @@ class OptionDetail:
         self.right = option.right
 
     def __str__(self):
-        return 'OptionDetail:\n' + 'Option: '+str(self.option) + '\n' + 'Underlying: ' + str(self.underlying)
+        return 'OptionDetail:\n' + \
+            'Option: '+str(self.option) + '\n' + \
+            'Underlying: ' + str(self.underlying)
 
 
 def setApplication(app):
     global _app
     _app = app
+    global _marketDataObservable
+    _marketDataObservable = _MarketDataStream()
+
+
+def getApplication():
+    return _app
 
 
 def toDate(date):
@@ -47,12 +57,19 @@ def toTWSDateFromDate(date):
 
 ###################################################################
 _app = None
+_marketDataObservable = None
 _twsDateFormat = '%Y%m%d'
 
 
-def _app():
-    return _app
+class _MarketDataStream:
+    def __init__(self):
+        self.observable = Subject()
+        _app.pendingTickersEvent += self.__onMarketData
+
+    def __onMarketData(self, pendingTickers):
+        for marketData in pendingTickers:
+            self.observable.on_next(marketData)
 
 
-def _createOption(symbol, expiration, strike, right, exchange):
-    return Option(symbol, toTWSDateFromDate(expiration), strike, right, exchange)
+def _marketDataObservable():
+    return _marketDataObservable

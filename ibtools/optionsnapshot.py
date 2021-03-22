@@ -1,130 +1,158 @@
+
+import math
+import rx
 from rx.subject import Subject
 from rx.operators import *
-from .tools import OptionDetail, _app
 from IPython.utils import io
+from ibtools.tools import getApplication, _marketDataObservable
 
 
-def getOptionChainSnapshot(optionChain, onChainSnapshotAvailable=lambda snapshot: None):
-    return OptionChainSnapshot(optionChain, onChainSnapshotAvailable)
+class OptionMarketData:
 
-
-def getOptionChainsSnapshot(optionChains, onChainsSnapshotAvailable=lambda snapshots: None):
-    return OptionChainsSnapshot(optionChains, onChainsSnapshotAvailable)
-
-
-class OptionSnapshot:
-
-    def __init__(self, optionDetail, marketData, undMarketData):
+    def __init__(self, optionDetail):
         self.optionDetail = optionDetail
-        self.marketData = marketData
-        self.undMarketData = undMarketData
         self.symbol = optionDetail.symbol
         self.expiration = optionDetail.expiration
         self.strike = optionDetail.strike
         self.right = optionDetail.right
-
-    def __str__(self):
-        return 'Option snapshot '+str(self.symbol) + ' on ' + \
-            str(self.expiration) + ' at ' + str(self.strike)+str(self.right)
-
-
-class OptionChainSnapshot:
-
-    def __init__(self, optionChain, chainSnapshotAvailableListener):
-        self.optionChain = optionChain
-        self.underlying = optionChain.underlying
-        self.chainSnapshotAvailableListener = chainSnapshotAvailableListener
-        self.symbol = optionChain.symbol
-        self.expiration = optionChain.expiration
         self.isDataAvailable = False
-        self.chain = optionChain.callContracts+optionChain.putContracts
 
-        print('Creating option chain snapshot for ' +
-              str(self.symbol)+' on '+str(self.expiration)+'...')
-        self.__subscribeToMarketData()
+    def subscribe(self, marketDataReadyListener=lambda snapshot: None):
+        self.__marketDataReadyListener = marketDataReadyListener
+        self.undMarketData = _requestMarketData(self.optionDetail.underlying)
 
-    def __subscribeToMarketData(self):
-        self.undMarketData = _requestMarketData(self.underlying)
-
-        self.__dataStream = _MarketDataStream()
-        self.__dataStream.observable \
+        _marketDataObservable().observable \
             .pipe(
-                filter(lambda data: data.contract in self.chain),
+                filter(lambda data: data.contract == self.optionDetail.option),
                 filter(_isMarketDataReady),
                 distinct(lambda data: data.contract),
-                take(len(self.chain)),
-                do_action(lambda data: _cancelMarketData(data.contract)),
-                group_by(lambda data: data.contract.right == 'C'),
+                take(1)
+        ) .subscribe(on_completed=self.__onMarketDataComplete)
 
-                flat_map(lambda grp: grp.pipe(to_list()))
-            ) .subscribe(on_next=self.__onMarketDataByRight,
-                         on_completed=self.__onAllMarketDataReady)
+        self.marketData = _requestMarketData(self.optionDetail.option)
 
-        _requestMarketDataForChain(self.chain)
-
-    def __onMarketDataByRight(self, marketDataByRight):
-        if marketDataByRight[0].contract.right == 'C':
-            self.calls = _snapshotByStrike(
-                self.optionChain, 'C', marketDataByRight, self.undMarketData)
-        else:
-            self.puts = _snapshotByStrike(
-                self.optionChain, 'P', marketDataByRight, self.undMarketData)
-
-    def __onAllMarketDataReady(self):
-        with io.capture_output():
-            _cancelMarketData(self.underlying)
+    def __onMarketDataComplete(self):
         self.isDataAvailable = True
-        print('Option chain snapshot for ' + self.symbol+' on '+str(self.expiration) + ' created.')
-        self.chainSnapshotAvailableListener(self)
+        self.__marketDataReadyListener(self)
+        del self.__marketDataReadyListener
+
+    def unsubscribe(self):
+        if hasattr(self, 'undMarketData'):
+            with io.capture_output():
+                _cancelMarketData(self.optionDetail.underlying)
+                _cancelMarketData(self.optionDetail.option)
+            del self.undMarketData
+            del self.marketData
+            self.isDataAvailable = False
 
     def __nonzero__(self):
         return self.isDataAvailable
 
     def __str__(self):
-        return 'Option chain snapshot for ' + str(self.symbol) + ' on '+str(self.expiration)
+        return 'Option market data '+str(self.symbol) + \
+            ' on ' + str(self.expiration) + \
+            ' at strike ' + str(self.strike) + str(self.right)
 
 
-class OptionChainsSnapshot:
+class OptionChainMarketData:
 
-    def __init__(self, optionChains, chainsSnapshotAvailableListener):
+    def __init__(self, optionChain):
+        self.optionChain = optionChain
+        self.underlying = optionChain.underlying
+        self.symbol = optionChain.symbol
+        self.expiration = optionChain.expiration
+        self.calls = _fromOptionDetailsToOptionMarketData(optionChain.calls)
+        self.puts = _fromOptionDetailsToOptionMarketData(optionChain.puts)
+        self.__allOptionMarketData = list(self.calls.values()) + \
+            list(self.puts.values())
+        self.__chainSize = len(self.calls) + len(self.puts)
+        self.__isDataAvailable = False
+
+    def subscribe(self, marketDataReadyListener=lambda snapshot: None):
+        self.__marketDataReadyListener = marketDataReadyListener
+        _subscribeAllItems(self.__chainSize,
+                           self.__onAllSnapshotsSubscribed,
+                           self.__subscibeAllOptions)
+
+    def __subscibeAllOptions(self, observable):
+        for optionMarketData in self.__allOptionMarketData:
+            optionMarketData.subscribe(observable.on_next)
+            getApplication().sleep(_markteReqThrottle)
+
+    def __onAllSnapshotsSubscribed(self):
+        self.__isDataAvailable = True
+        print('Option chain market data for ' + self.symbol +
+              ' on '+str(self.expiration) + ' is now subscribed.')
+        self.__marketDataReadyListener(self)
+        del self.__marketDataReadyListener
+
+    def unsubscribe(self):
+        for optionMarketData in self.__allOptionMarketData:
+            optionMarketData.unsubscribe()
+        self.__isDataAvailable = False
+        print('Option chain market data for ' + self.symbol +
+              ' on '+str(self.expiration) + ' is now unsubscribed.')
+
+    def __len__(self):
+        return self.__chainSize
+
+    def __nonzero__(self):
+        return self.__isDataAvailable
+
+    def __str__(self):
+        return 'Option chain market data for ' + str(self.symbol) + ' on '+str(self.expiration)
+
+
+class OptionChainsMarketData:
+
+    def __init__(self, optionChains):
         self.optionChains = optionChains
         self.symbol = next(iter(optionChains.values())).symbol
         self.expirations = list(optionChains.keys())
-        self.chainsSnapshotAvailableListener = chainsSnapshotAvailableListener
-        self.isDataAvailable = False
-        print('Creating option chains snapshot for ' +
-              str(self.symbol)+' on '+str(self.expirations)+'...')
-        self.__requestChainsSnapshot(optionChains)
+        self.chains = {chainMarketData.expiration: chainMarketData
+                       for chainMarketData in [OptionChainMarketData(chain)
+                                               for chain in optionChains.values()]}
+        self.__noOfChains = len(self.chains)
+        self.__isDataAvailable = False
 
-    def __requestChainsSnapshot(self, optionChains):
-        sub = Subject()
+    def subscribe(self, marketDataReadyListener=lambda snapshot: None):
+        self.__marketDataReadyListener = marketDataReadyListener
+        _subscribeAllItems(len(self.optionChains.values()),
+                           self.__onAllChainMarketDataSubscribed,
+                           self.__subscibeAllChains)
 
-        sub.pipe(
-            take(len(optionChains.values())),
-        ) .subscribe(on_completed=self.__onAllChainSnapshotsCreated)
+    def __subscibeAllChains(self, observable):
+        for optionChainMarketData in self.chains.values():
+            optionChainMarketData.subscribe(observable.on_next)
 
-        chainSnapshots = [getOptionChainSnapshot(chain, sub.on_next)
-                          for chain in optionChains.values()]
-        self.chainSnapshotsByExpiration = {chainSnapshot.expiration: chainSnapshot
-                                           for chainSnapshot in chainSnapshots}
+    def unsubscribe(self):
+        for optionChainMarketData in self.chains.values():
+            optionChainMarketData.unsubscribe()
+        self.__isDataAvailable = False
+        print('Option chains market data for ' + self.symbol +
+              ' on expirations '+str(self.expirations) + ' are now unsubscribed.')
 
-    def __onAllChainSnapshotsCreated(self):
-        self.isDataAvailable = True
-        print('Option chains snapshot for ' + self.symbol +
-              ' on '+str(self.expirations) + ' created.')
-        self.chainsSnapshotAvailableListener(self)
+    def __onAllChainMarketDataSubscribed(self):
+        self.__isDataAvailable = True
+        print('Option chains market data for ' + self.symbol +
+              ' on expirations '+str(self.expirations) + ' are now subscribed.')
+        self.__marketDataReadyListener(self)
+        del self.__marketDataReadyListener
 
     def __nonzero__(self):
-        return self.isDataAvailable
+        return self.__isDataAvailable
 
     def keys(self):
-        return self.chainSnapshotsByExpiration.keys()
+        return self.chains.keys()
 
     def __getitem__(self, expiration):
-        return self.chainSnapshotsByExpiration[expiration]
+        return self.chains[expiration]
+
+    def __len__(self):
+        return self.__noOfChains
 
     def __str__(self):
-        return 'Option chains snapshots for ' + \
+        return 'Option chains market data for ' + \
             str(self.symbol) + ' on expirations ' + \
             str(self.expirations)
 
@@ -143,52 +171,33 @@ _tickList = [_putCallVolume, _openInterest,
 _genericTickList = ','.join([str(i) for i in _tickList])
 
 
-class _MarketDataStream:
-    def __init__(self):
-        self.observable = Subject()
-        _app().pendingTickersEvent += self.__onMarketData
-
-    def __onMarketData(self, pendingTickers):
-        for marketData in pendingTickers:
-            self.observable.on_next(marketData)
-
-
-def _optionSnapshot(optionChain, right, strike, marketData, undMarketData):
-    optionDetail = None
-    if right == 'C':
-        optionDetail = OptionDetail(marketData.contract, optionChain.calls[strike].underlying)
-    else:
-        optionDetail = OptionDetail(marketData.contract, optionChain.puts[strike].underlying)
-    return OptionSnapshot(optionDetail, marketData, undMarketData)
-
-
-def _snapshotByStrike(optionChain, right, marketDataSet, undMarketData):
-    return {marketData.contract.strike: _optionSnapshot(optionChain,
-                                                        right,
-                                                        marketData.contract.strike,
-                                                        marketData,
-                                                        undMarketData)
-            for marketData in marketDataSet}
-
-
 def _isMarketDataReady(marketData):
-    return True
-    # return not math.isnan(marketData.bidSize)
+    # return True
+    return not math.isnan(marketData.bidSize)
     # return not math.isnan(marketData.callOpenInterest) and \
     #   not math.isnan(marketData.bid) \
     #  and hasattr(marketData, 'modelGreeks')
 
 
-def _requestMarketDataForChain(chain):
-    for contract in chain:
-        _requestMarketData(contract)
-        _app().sleep(_markteReqThrottle)
-
-
 def _requestMarketData(contract):
-    return _app().reqMktData(contract, genericTickList=_genericTickList)
-    # return _app().reqMktData(contract, snapshot=True)
+    return getApplication().reqMktData(contract, genericTickList=_genericTickList)
 
 
 def _cancelMarketData(contract):
-    _app().cancelMktData(contract)
+    getApplication().cancelMktData(contract)
+
+
+def _fromOptionDetailsToOptionMarketData(optionDetails):
+    return rx.of(*list(optionDetails.values())).pipe(
+        map(lambda detail: OptionMarketData(detail)),
+        to_dict(lambda marketData: marketData.strike,
+                lambda marketData: marketData)
+    ).run()
+
+
+def _subscribeAllItems(noOfItems, onCompleted, subscribeAllFunc):
+    observable = Subject()
+    observable.pipe(
+        take(noOfItems)
+    ) .subscribe(on_completed=onCompleted)
+    subscribeAllFunc(observable)
