@@ -4,7 +4,9 @@ import rx
 from rx.subject import Subject
 from rx.operators import *
 from IPython.utils import io
-from ibtools.tools import getApplication, _marketDataObservable
+from tools import getApplication, _marketDataObservable
+from rx.scheduler.eventloop import AsyncIOScheduler
+import asyncio
 
 
 class OptionMarketData:
@@ -19,22 +21,33 @@ class OptionMarketData:
 
     def subscribe(self, marketDataReadyListener=lambda snapshot: None):
         self.__marketDataReadyListener = marketDataReadyListener
-        self.undMarketData = _requestMarketData(self.optionDetail.underlying)
 
+        loop = asyncio.get_event_loop()
+        aio_scheduler = AsyncIOScheduler(loop=loop)
         _marketDataObservable().observable \
             .pipe(
                 filter(lambda data: data.contract == self.optionDetail.option),
-                filter(_isMarketDataReady),
-                distinct(lambda data: data.contract),
+                filter(_isOptionMarketDataReady),
+                timeout(_marketDataTimeout),
                 take(1)
-        ) .subscribe(on_completed=self.__onMarketDataComplete)
+        ) .subscribe(on_completed=self.__onMarketDataComplete,
+                     on_error=self.__onMarketDataTimeout,
+                     scheduler=aio_scheduler)
 
+        self.undMarketData = _requestMarketData(self.optionDetail.underlying)
         self.marketData = _requestMarketData(self.optionDetail.option)
 
     def __onMarketDataComplete(self):
         self.isDataAvailable = True
         self.__marketDataReadyListener(self)
         del self.__marketDataReadyListener
+
+    def __onMarketDataTimeout(self, error):
+        print('Option market data '+str(self.symbol) +
+              ' on ' + str(self.expiration) +
+              ' at strike ' + str(self.strike) + str(self.right) +
+              'timed out!')
+        self.unsubscribe()
 
     def unsubscribe(self):
         if hasattr(self, 'undMarketData'):
@@ -77,7 +90,7 @@ class OptionChainMarketData:
     def __subscibeAllOptions(self, observable):
         for optionMarketData in self.__allOptionMarketData:
             optionMarketData.subscribe(observable.on_next)
-            getApplication().sleep(_markteReqThrottle)
+            getApplication().sleep(_marketReqThrottle)
 
     def __onAllSnapshotsSubscribed(self):
         self.__isDataAvailable = True
@@ -159,7 +172,8 @@ class OptionChainsMarketData:
 ###################################################################
 
 
-_markteReqThrottle = 0.1
+_marketDataTimeout = 10000
+_marketReqThrottle = 0.1
 
 _putCallVolume = 100
 _openInterest = 101
@@ -171,10 +185,11 @@ _tickList = [_putCallVolume, _openInterest,
 _genericTickList = ','.join([str(i) for i in _tickList])
 
 
-def _isMarketDataReady(marketData):
-    return not math.isnan(marketData.callOpenInterest) and \
+def _isOptionMarketDataReady(marketData):
+    result = not math.isnan(marketData.callOpenInterest) and \
         not math.isnan(marketData.bid) \
-        and hasattr(marketData, 'modelGreeks')
+        and marketData.modelGreeks != None
+    return result
 
 
 def _requestMarketData(contract):

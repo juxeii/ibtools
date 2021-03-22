@@ -3,7 +3,7 @@ from IPython.utils import io
 from datetime import timedelta
 from os.path import exists
 from ib_insync import Option
-from ibtools.tools import getApplication, toTWSDateFromDate, today, toDate, toDates, OptionDetail
+from tools import getApplication, toTWSDateFromDate, today, toDate, toDates, OptionDetail
 
 
 class OptionChain:
@@ -24,24 +24,24 @@ class OptionChain:
         return 'Option chain for '+str(self.symbol) + ' on '+str(self.expiration)
 
 
-def getOptionChains(underlyingContract, *dates):
-    getApplication().qualifyContracts(underlyingContract)
-    expirations = _filterExpirations(toDates(*dates), underlyingContract)
-    return _chainsForExpirations(underlyingContract, expirations)
+def getOptionChains(underlying, *dates):
+    getApplication().qualifyContracts(underlying)
+    expirations = _filterExpirations(toDates(*dates), underlying)
+    return _chainsForExpirations(underlying, expirations)
 
 
-def getOptionChainsInDateRange(underlyingContract, beginDate, endDate):
-    getApplication().qualifyContracts(underlyingContract)
-    chainExpirations = _expirationsOfChain(underlyingContract)
+def getOptionChainsInDateRange(underlying, beginDate, endDate):
+    getApplication().qualifyContracts(underlying)
+    chainExpirations = _expirationsOfChain(underlying)
     expirationsInRange = _expirationsInDateRange(toDate(beginDate),
                                                  toDate(endDate),
                                                  chainExpirations)
-    return _chainsForExpirations(underlyingContract, expirationsInRange)
+    return _chainsForExpirations(underlying, expirationsInRange)
 
 
-def getOptionChainsInDteRange(underlyingContract, lowerDte, higherDte):
+def getOptionChainsInDteRange(underlying, lowerDte, higherDte):
     currentDay = today()
-    return getOptionChainsInDateRange(underlyingContract,
+    return getOptionChainsInDateRange(underlying,
                                       currentDay+timedelta(days=lowerDte),
                                       currentDay+timedelta(days=higherDte))
 
@@ -54,15 +54,15 @@ def _filterExpirations(dates, contract):
     return [date for date in dates if date in chainExpirations]
 
 
-def _chainsForExpirations(underlyingContract, expirations):
-    storedChains = _loadValidChains(underlyingContract)
-    print(underlyingContract.symbol+":storedChains "+str(storedChains))
+def _chainsForExpirations(underlying, expirations):
+    storedChains = _loadValidChains(underlying)
+    print(underlying.symbol+":storedChains "+str(storedChains))
     cachedChains = _cachedChains(storedChains, expirations)
-    print(underlyingContract.symbol+":cachedChains "+str(cachedChains))
-    newChains = _newChains(underlyingContract, storedChains, expirations)
-    print(underlyingContract.symbol+":newChains "+str(newChains))
+    print(underlying.symbol+":cachedChains "+str(cachedChains))
+    newChains = _newChains(underlying, storedChains, expirations)
+    print(underlying.symbol+":newChains "+str(newChains))
 
-    return _serializeAndReturnChains(underlyingContract, cachedChains, newChains, storedChains)
+    return _serializeAndReturnChains(underlying, cachedChains, newChains, storedChains)
 
 
 def _cachedChains(storedChains, expirations):
@@ -72,19 +72,19 @@ def _cachedChains(storedChains, expirations):
     return {expiration: storedChains[expiration] for expiration in cachedExpirations}
 
 
-def _newChains(underlyingContract, storedChains, expirations):
+def _newChains(underlying, storedChains, expirations):
     storedExpirations = list(storedChains.keys())
     notCachedExpirations = _notCachedExpirations(
         storedExpirations, expirations)
 
-    return {expiration: _createContractsForExpiration(underlyingContract, expiration)
+    return {expiration: _createContractsForExpiration(underlying, expiration)
             for expiration in notCachedExpirations}
 
 
-def _serializeAndReturnChains(underlyingContract, cachedChains, newChains, storedChains):
+def _serializeAndReturnChains(underlying, cachedChains, newChains, storedChains):
     chainsToReturn = {**cachedChains, **newChains}
     chainsToSerialize = {**storedChains, **newChains}
-    _serializeChains(underlyingContract, chainsToSerialize)
+    _serializeChains(underlying, chainsToSerialize)
     return chainsToReturn
 
 
