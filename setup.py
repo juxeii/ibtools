@@ -11,6 +11,7 @@ setup(
     author_email="juxeiier@gmail.com",
     description=DESCRIPTION,
     long_description=LONG_DESCRIPTION,
+    long_description_content_type='text/markdown',
     url='https://github.com/juxeii/ibtools',
     license='BSD',
     python_requires='>=3.6',
