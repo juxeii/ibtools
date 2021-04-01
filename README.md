@@ -21,7 +21,7 @@ import ibtools as ibt
 ....
 
 ib = IB()
-ibt.setApplication(ib) # Neeeded!
+ibt.app = ib # Neeeded!
 ib.connect(port=7497, clientId=1)
 ```
 The first example shows you how to request option chains for specific expiration dates:
