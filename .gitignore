@@ -1,6 +1,7 @@
 /build
 /dist
 /ibtools/.vscode
+/custom
 *egg-info*
 *vscode*
 *cpython*

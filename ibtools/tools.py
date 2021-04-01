@@ -1,12 +1,11 @@
 import datetime
+from numpy import apply_over_axes
 from rx.subject import Subject
 
 
 class OptionDetail:
 
     def __init__(self, option, underlying):
-        _app.qualifyContracts(underlying)
-
         self.option = option
         self.underlying = underlying
         self.symbol = underlying.symbol
@@ -20,15 +19,15 @@ class OptionDetail:
             'Underlying: ' + str(self.underlying)
 
 
-def setApplication(app):
-    global _app
-    _app = app
-    global _marketDataObservable
-    _marketDataObservable = _MarketDataStream()
+class MarketDataStream:
 
+    def __init__(self, app):
+        self.observable = Subject()
+        app.pendingTickersEvent += self.__onMarketData
 
-def getApplication():
-    return _app
+    def __onMarketData(self, pendingTickers):
+        for marketData in pendingTickers:
+            self.observable.on_next(marketData)
 
 
 def toDate(date):
@@ -45,31 +44,24 @@ def today():
 
 def toDateFromTWSDate(twsDate):
     if isinstance(twsDate, str):
-        return datetime.datetime.strptime(twsDate, _twsDateFormat).date()
+        return datetime.datetime.strptime(twsDate, twsDateFormat).date()
     return twsDate
 
 
 def toTWSDateFromDate(date):
     if isinstance(date, str):
         return date
-    return date.strftime(_twsDateFormat)
+    return date.strftime(twsDateFormat)
 
 
-###################################################################
-_app = None
-_marketDataObservable = None
-_twsDateFormat = '%Y%m%d'
+global app
+app = None
 
+global marketDataObservable
+marketDataObservable = None
 
-class _MarketDataStream:
-    def __init__(self):
-        self.observable = Subject()
-        _app.pendingTickersEvent += self.__onMarketData
+global cacheFilePath
+cacheFilePath = ''
 
-    def __onMarketData(self, pendingTickers):
-        for marketData in pendingTickers:
-            self.observable.on_next(marketData)
-
-
-def _marketDataObservable():
-    return _marketDataObservable
+global twsDateFormat
+twsDateFormat = '%Y%m%d'

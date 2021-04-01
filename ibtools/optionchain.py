@@ -1,9 +1,10 @@
+import ibtools as ibt
 import pickle
 from IPython.utils import io
 from datetime import timedelta
 from os.path import exists
-from ib_insync import Option
-from tools import getApplication, toTWSDateFromDate, today, toDate, toDates, OptionDetail
+from ib_insync import Option, FuturesOption
+from tools import toTWSDateFromDate, today, toDate, toDates, OptionDetail
 
 
 class OptionChain:
@@ -25,18 +26,21 @@ class OptionChain:
 
 
 def getOptionChains(underlying, *dates):
-    getApplication().qualifyContracts(underlying)
-    expirations = _filterExpirations(toDates(*dates), underlying)
-    return _chainsForExpirations(underlying, expirations)
+    typedDates = toDates(*dates)
+    def isExpiration(expiration): return expiration in typedDates
+
+    return _chainsForValidDates(underlying, isExpiration)
 
 
 def getOptionChainsInDateRange(underlying, beginDate, endDate):
-    getApplication().qualifyContracts(underlying)
-    chainExpirations = _expirationsOfChain(underlying)
-    expirationsInRange = _expirationsInDateRange(toDate(beginDate),
-                                                 toDate(endDate),
-                                                 chainExpirations)
-    return _chainsForExpirations(underlying, expirationsInRange)
+    typedBeginDate = toDate(beginDate)
+    typedEndDate = toDate(endDate)
+
+    def isExpiration(expiration): return _isDateInRange(expiration,
+                                                        typedBeginDate,
+                                                        typedEndDate)
+
+    return _chainsForValidDates(underlying, isExpiration)
 
 
 def getOptionChainsInDteRange(underlying, lowerDte, higherDte):
@@ -48,99 +52,116 @@ def getOptionChainsInDteRange(underlying, lowerDte, higherDte):
 
 ###################################################################
 
+def _chainsForValidDates(underlying, isExpiration):
+    ibt.app.qualifyContracts(underlying)
 
-def _filterExpirations(dates, contract):
-    chainExpirations = _expirationsOfChain(contract)
-    return [date for date in dates if date in chainExpirations]
-
-
-def _chainsForExpirations(underlying, expirations):
+    twsChains = _chainByExpiration(underlying)
+    validDates = [expiration for expiration in twsChains if isExpiration(expiration)]
     storedChains = _loadValidChains(underlying)
-    print(underlying.symbol+":storedChains "+str(storedChains))
-    cachedChains = _cachedChains(storedChains, expirations)
-    print(underlying.symbol+":cachedChains "+str(cachedChains))
-    newChains = _newChains(underlying, storedChains, expirations)
-    print(underlying.symbol+":newChains "+str(newChains))
+    cachedChains = _cachedChains(storedChains, validDates)
+    if len(cachedChains) == len(validDates):
+        return cachedChains
 
+    newChains = _newChainsFromTwsChains(underlying, twsChains, validDates, cachedChains)
     return _serializeAndReturnChains(underlying, cachedChains, newChains, storedChains)
 
 
-def _cachedChains(storedChains, expirations):
-    storedExpirations = list(storedChains.keys())
-    cachedExpirations = _cachedExpirations(storedExpirations, expirations)
-
-    return {expiration: storedChains[expiration] for expiration in cachedExpirations}
+def _cachedChains(storedChains, validDates):
+    return {expiration: storedChains[expiration] for expiration in validDates
+            if expiration in storedChains}
 
 
-def _newChains(underlying, storedChains, expirations):
-    storedExpirations = list(storedChains.keys())
-    notCachedExpirations = _notCachedExpirations(
-        storedExpirations, expirations)
+def _newChainsFromTwsChains(underlying, twsChains, validDates, cachedChains):
+    fromTwsChains = {expiration: twsChains[expiration] for expiration in validDates
+                     if expiration not in cachedChains}
+    return {expiration: _createContractsForExpiration(underlying,
+                                                      chain,
+                                                      expiration)
+            for expiration, chain in fromTwsChains.items()}
 
-    return {expiration: _createContractsForExpiration(underlying, expiration)
-            for expiration in notCachedExpirations}
+
+def _chainByExpiration(underlying):
+    chains = _chainsForSecType(underlying)
+    return {toDate(expiration): chain for chain in chains for expiration in chain.expirations}
+
+
+def _loadValidChains(contract):
+    storedChains = _deSerializeChains(contract)
+    validStoredChains = _filterOutdatedChains(storedChains)
+    _serializeChains(contract, validStoredChains)
+
+    return validStoredChains
+
+
+def _createContractsForExpiration(underlying, chain, expiration):
+    calls = _contractsByStrikes(underlying, chain, "C", expiration)
+    puts = _contractsByStrikes(underlying, chain, "P", expiration)
+    return OptionChain(underlying, expiration, calls, puts)
+
+
+def _filterExchangeFromChains(chains, exchange):
+    return [chain for chain in chains if chain.exchange == exchange]
 
 
 def _serializeAndReturnChains(underlying, cachedChains, newChains, storedChains):
     chainsToReturn = {**cachedChains, **newChains}
+    print(f"{underlying.symbol} loaded chains: {chainsToReturn}")
     chainsToSerialize = {**storedChains, **newChains}
     _serializeChains(underlying, chainsToSerialize)
+
     return chainsToReturn
 
 
-def _expirationsInDateRange(beginDate, endDate, expirations):
-    return [expiration for expiration in expirations if beginDate <= expiration <= endDate]
+def _isDateInRange(date, beginDate, endDate):
+    return beginDate <= date <= endDate
 
 
-def _cachedExpirations(storedExpirations, requestedExpirations):
-    return [expiration for expiration in requestedExpirations if expiration in storedExpirations]
+def _chains(contract):
+    futFopExchange = contract.exchange if _isFuture(contract) else ''
+    return ibt.app.reqSecDefOptParams(underlyingSymbol=contract.symbol,
+                                      futFopExchange=futFopExchange,
+                                      underlyingSecType=contract.secType,
+                                      underlyingConId=contract.conId)
 
 
-def _notCachedExpirations(storedExpirations, requestedExpirations):
-    return [expiration for expiration in requestedExpirations if not expiration in storedExpirations]
+def _isFuture(contract):
+    return contract.secType == 'FUT'
 
 
-def _chain(contract):
-    optChain = getApplication().reqSecDefOptParams(underlyingSymbol=contract.symbol,
-                                                   futFopExchange='',
-                                                   underlyingSecType='STK',
-                                                   underlyingConId=contract.conId)
-    return _filterExchangeFromChain(optChain, 'SMART')
+def _chainsForExchange(contract, exchange):
+    return _filterExchangeFromChains(_chains(contract), exchange)
+
+
+def _chainsForSecType(contract):
+    if _isFuture(contract):
+        return _chainsForExchange(contract, contract.exchange)
+    return _chainsForExchange(contract, 'SMART')
+
+
+def _createOption(underlying, strike, right, expiration):
+    option = FuturesOption() if _isFuture(underlying) else Option()
+    option.symbol = underlying.symbol
+    option.lastTradeDateOrContractMonth = toTWSDateFromDate(expiration)
+    option.strike = strike
+    option.right = right
+    option.exchange = underlying.exchange
+    return option
 
 
 def _optionDetailsForExpiration(underlying, chain, right, expiration):
-    options = [Option(chain.tradingClass,
-                      toTWSDateFromDate(expiration),
-                      strike,
-                      right,
-                      chain.exchange)
-               for strike in chain.strikes]
+    options = [_createOption(underlying, strike, right, expiration) for strike in chain.strikes]
+    return _filterValidOptions(underlying, options)
+
+
+def _filterValidOptions(underlying, options):
     with io.capture_output():  # Trying to suppress Error 200 from TWS
-        validOptions = getApplication().qualifyContracts(*options)
+        validOptions = ibt.app.qualifyContracts(*options)
     return [OptionDetail(option, underlying) for option in validOptions]
 
 
 def _contractsByStrikes(underlying, chain, right, expiration):
-    optionDetails = _optionDetailsForExpiration(
-        underlying, chain, right, expiration)
+    optionDetails = _optionDetailsForExpiration(underlying, chain, right, expiration)
     return {optionDetail.strike:  optionDetail for optionDetail in optionDetails}
-
-
-def _createContractsForExpiration(underlying, expiration):
-    print("Creating option contracts for " +
-          underlying.symbol+" "+str(expiration)+" ...")
-
-    chain = _chain(underlying)
-    callContracts = _contractsByStrikes(underlying, chain, "C", expiration)
-    putContracts = _contractsByStrikes(underlying, chain, "P", expiration)
-
-    print("Created option contracts for " +
-          underlying.symbol+" "+str(expiration)+".")
-    return OptionChain(underlying, expiration, callContracts, putContracts)
-
-
-def _expirationsOfChain(contract):
-    return toDates(*_chain(contract).expirations)
 
 
 def _timeDeltaInDays(earlyDate, lateDate):
@@ -151,12 +172,8 @@ def _dte(expiration):
     return _timeDeltaInDays(today(), expiration)
 
 
-def _filterExchangeFromChain(chain, exchange):
-    return next(filter(lambda x: x.exchange == exchange, chain))
-
-
 def _fileNameForChains(contract):
-    return contract.symbol+'_'+str(contract.conId)+'_optionchains'
+    return f"{ibt.cacheFilePath} {contract.symbol} {contract.conId}_optionchains"
 
 
 def _deSerializeChains(contract):
@@ -169,6 +186,7 @@ def _deSerializeChains(contract):
     infile = open(filename, 'rb')
     storedChains = pickle.load(infile)
     infile.close()
+
     return storedChains
 
 
@@ -182,10 +200,3 @@ def _serializeChains(contract, chains):
 def _filterOutdatedChains(storedChains):
     return {expiration: chain for expiration, chain in storedChains.items()
             if _dte(expiration) >= 0}
-
-
-def _loadValidChains(contract):
-    storedChains = _deSerializeChains(contract)
-    validStoredChains = _filterOutdatedChains(storedChains)
-    _serializeChains(contract, validStoredChains)
-    return validStoredChains

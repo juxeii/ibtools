@@ -1,12 +1,9 @@
-
 import math
 import rx
 from rx.subject import Subject
 from rx.operators import *
 from IPython.utils import io
-from tools import getApplication, _marketDataObservable
-from rx.scheduler.eventloop import AsyncIOScheduler
-import asyncio
+import ibtools as ibt
 
 
 class OptionMarketData:
@@ -17,49 +14,33 @@ class OptionMarketData:
         self.expiration = optionDetail.expiration
         self.strike = optionDetail.strike
         self.right = optionDetail.right
-        self.isDataAvailable = False
+        self.__isDataAvailable = False
 
-    def subscribe(self, marketDataReadyListener=lambda snapshot: None):
+    def subscribe(self, marketDataReadyListener=lambda optionMarketData: None):
         self.__marketDataReadyListener = marketDataReadyListener
 
-        loop = asyncio.get_event_loop()
-        aio_scheduler = AsyncIOScheduler(loop=loop)
-        _marketDataObservable().observable \
+        ibt.marketDataObservable.observable \
             .pipe(
                 filter(lambda data: data.contract == self.optionDetail.option),
                 filter(_isOptionMarketDataReady),
-                timeout(_marketDataTimeout),
                 take(1)
-        ) .subscribe(on_completed=self.__onMarketDataComplete,
-                     on_error=self.__onMarketDataTimeout,
-                     scheduler=aio_scheduler)
+            ) .subscribe(on_completed=self.__onMarketDataComplete)
 
-        self.undMarketData = _requestMarketData(self.optionDetail.underlying)
-        self.marketData = _requestMarketData(self.optionDetail.option)
+        self.marketData = requestMarketData(self.optionDetail.option)
 
     def __onMarketDataComplete(self):
-        self.isDataAvailable = True
+        self.__isDataAvailable = True
         self.__marketDataReadyListener(self)
         del self.__marketDataReadyListener
 
-    def __onMarketDataTimeout(self, error):
-        print('Option market data '+str(self.symbol) +
-              ' on ' + str(self.expiration) +
-              ' at strike ' + str(self.strike) + str(self.right) +
-              'timed out!')
-        self.unsubscribe()
-
     def unsubscribe(self):
-        if hasattr(self, 'undMarketData'):
-            with io.capture_output():
-                _cancelMarketData(self.optionDetail.underlying)
-                _cancelMarketData(self.optionDetail.option)
-            del self.undMarketData
-            del self.marketData
-            self.isDataAvailable = False
+        # with io.capture_output():
+        cancelMarketData(self.optionDetail.option)
+        del self.marketData
+        self.__isDataAvailable = False
 
     def __nonzero__(self):
-        return self.isDataAvailable
+        return self.__isDataAvailable
 
     def __str__(self):
         return 'Option market data '+str(self.symbol) + \
@@ -90,7 +71,7 @@ class OptionChainMarketData:
     def __subscibeAllOptions(self, observable):
         for optionMarketData in self.__allOptionMarketData:
             optionMarketData.subscribe(observable.on_next)
-            getApplication().sleep(_marketReqThrottle)
+            ibt.app.sleep(_marketReqThrottle)
 
     def __onAllSnapshotsSubscribed(self):
         self.__isDataAvailable = True
@@ -169,10 +150,17 @@ class OptionChainsMarketData:
             str(self.symbol) + ' on expirations ' + \
             str(self.expirations)
 
+
+def requestMarketData(contract):
+    return ibt.app.reqMktData(contract, genericTickList=_genericTickList)
+
+
+def cancelMarketData(contract):
+    ibt.app.cancelMktData(contract)
+
 ###################################################################
 
 
-_marketDataTimeout = 10000
 _marketReqThrottle = 0.1
 
 _putCallVolume = 100
@@ -190,14 +178,6 @@ def _isOptionMarketDataReady(marketData):
         not math.isnan(marketData.bid) \
         and marketData.modelGreeks != None
     return result
-
-
-def _requestMarketData(contract):
-    return getApplication().reqMktData(contract, genericTickList=_genericTickList)
-
-
-def _cancelMarketData(contract):
-    getApplication().cancelMktData(contract)
 
 
 def _fromOptionDetailsToOptionMarketData(optionDetails):
