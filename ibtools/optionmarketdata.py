@@ -1,9 +1,8 @@
-import math
-import rx
-from rx.subject import Subject
-from rx.operators import *
-from IPython.utils import io
 import ibtools as ibt
+import math
+from rx import of
+from rx.subject import Subject
+from rx.operators import filter, take, to_dict
 
 
 class OptionMarketData:
@@ -181,7 +180,7 @@ def _isOptionMarketDataReady(marketData):
 
 
 def _fromOptionDetailsToOptionMarketData(optionDetails):
-    return rx.of(*list(optionDetails.values())).pipe(
+    return of(*list(optionDetails.values())).pipe(
         map(lambda detail: OptionMarketData(detail)),
         to_dict(lambda marketData: marketData.strike,
                 lambda marketData: marketData)

@@ -1,5 +1,4 @@
 import datetime
-from numpy import apply_over_axes
 from rx.subject import Subject
 
 
